@@ -1,4 +1,4 @@
-# SMART-TourBot: Hybrid Autonomous Tour-Guide Robot (ROS + TurtleBot 2)
+# SMART-TourBot: A Hybrid Deliberative–Reactive Tour Guide Robot For REPF B4 and DEH
 
 This repository contains the **complete final project implementation** for  
 **CS 4023/5023 – Intelligent Robotics (University of Oklahoma)**.
