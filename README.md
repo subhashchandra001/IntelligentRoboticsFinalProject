@@ -244,7 +244,7 @@ the TurtleBot platform and laboratory facilities used in this project.
 
 - **Course:** CS 4023/5023 – Intelligent Robotics
 - **Institution:** University of Oklahoma
-- **Semester:** Fall 2024
+- **Semester:** Fall 2025
 
 ---
 
