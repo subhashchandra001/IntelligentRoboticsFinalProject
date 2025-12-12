@@ -226,10 +226,10 @@ Support multi-floor navigation
 
 👥 Team Contributions
 
-Subhash Chandra
+Subhash Chandra: 
 System design, ROS architecture, semantic modeling, planning, control, audio integration, testing, and documentation.
 
-Brandon Aviles
+Brandon Aviles: 
 Brainstorming, environment measurements, system understanding, testing, debugging, and live demonstration support.
 
 🙏 Acknowledgements
@@ -238,17 +238,7 @@ Special thanks to Prof. Dean Hougen
 for guidance and instruction in CS 4023/5023 – Intelligent Robotics,
 and to the University of Oklahoma School of Computer Science.
 
-📜 License
 
-This project is intended for academic and educational use.
-
-If you want, next I can:
-
-Generate a LICENSE file
-
-Create a short README for GitHub front page
-
-Add troubleshooting section
 
 Convert this into GitHub Wiki pages
 
