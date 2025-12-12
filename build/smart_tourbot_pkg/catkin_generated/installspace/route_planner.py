@@ -1,0 +1,295 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+
+"""
+route_planner.py
+
+A* route planner for SMART-TourBot.
+
+This node:
+  * Maintains the same semantic graph structure as world_model.py
+    (nodes with (x, y), edges with distance + penalty).
+  * Subscribes to a goal topic (std_msgs/String with a node name).
+  * Runs A* from a semantic "current node" to that goal node.
+  * Publishes a nav_msgs/Path on /planned_path for RViz and executors.
+
+Behavior:
+  * First plan starts from a configurable start node (~start_node).
+  * After each successful plan, the planner updates its internal
+    current_node_id to the goal, so subsequent plans start from
+    the last visited semantic node.
+"""
+
+import math
+import heapq
+
+import rospy
+from std_msgs.msg import String
+from nav_msgs.msg import Path
+from geometry_msgs.msg import PoseStamped
+
+
+class SemanticPlanner(object):
+    def __init__(self):
+        rospy.loginfo("SemanticPlanner: initializing...")
+
+        # Parameters
+        self.frame_id = rospy.get_param("~frame_id", "map")
+
+        # Initial semantic start node (first plan only).
+        # After that, we track the last goal as current_node_id.
+        self.initial_start_node = rospy.get_param("~start_node", "START_REPF_ENTRANCE")
+
+        # Logical "current" semantic node where we think the robot is.
+        # This will be updated after each successful plan.
+        self.current_node_id = self.initial_start_node
+
+        # ------------------------------------------------------------------
+        # Semantic graph (must be consistent with world_model.py)
+        # ------------------------------------------------------------------
+        # Node positions in meters (topological / illustrative layout)
+        self.nodes = {
+            "START_REPF_ENTRANCE": (0.0, 0.0),
+            "REPF_BAYS":           (0.0, 2.74),
+            "REPF_UPPER_WALKWAY":  (1.76, 2.74),
+            "DEH_ATRIUM":          (1.76, 4.54),
+            "DEH_CS_OFFICE":       (4.76, 4.54),
+            "DEH_LABS":            (4.76, 0.0),
+            "HIGHLIGHT_HOUGEN":    (2.0, 0.0),
+
+        }
+
+        # Edges with penalties (same structure as in world_model)
+        self.edges = []
+        self._add_edge("START_REPF_ENTRANCE", "REPF_BAYS",          penalty=0.1)
+        self._add_edge("REPF_BAYS",            "REPF_UPPER_WALKWAY", penalty=0.1)
+        self._add_edge("REPF_UPPER_WALKWAY",   "DEH_ATRIUM",         penalty=0.1)
+        self._add_edge("DEH_ATRIUM",           "DEH_CS_OFFICE",      penalty=0.1)
+        self._add_edge("DEH_CS_OFFICE",        "DEH_LABS",           penalty=0.1)
+        self._add_edge("DEH_LABS",             "HIGHLIGHT_HOUGEN",   penalty=0.1)
+        self._add_edge("HIGHLIGHT_HOUGEN",     "START_REPF_ENTRANCE", penalty=0.9)
+
+
+
+
+        # Make edges undirected so you can plan both directions
+        self._make_undirected()
+
+        # Precompute adjacency list: node -> list of (neighbor, cost)
+        self.adj = self._build_adjacency()
+
+        # Publisher for planned path
+        self.path_pub = rospy.Publisher("planned_path", Path, queue_size=1, latch=True)
+
+        # Subscriber for goal requests (node name)
+        self.goal_sub = rospy.Subscriber(
+            "tour_goal",
+            String,
+            self.goal_callback,
+            queue_size=1,
+        )
+
+        rospy.loginfo(
+            "SemanticPlanner: ready with %d nodes and %d edges",
+            len(self.nodes),
+            len(self.edges),
+        )
+
+    # ------------------------------------------------------------------
+    # Graph helpers
+    # ------------------------------------------------------------------
+    def _add_edge(self, src_name, dst_name, penalty=0.0):
+        """Add a directed edge src -> dst with computed distance + penalty cost."""
+        if src_name not in self.nodes or dst_name not in self.nodes:
+            rospy.logwarn(
+                "SemanticPlanner: cannot add edge %s -> %s (unknown node)",
+                src_name,
+                dst_name,
+            )
+            return
+
+        x1, y1 = self.nodes[src_name]
+        x2, y2 = self.nodes[dst_name]
+        dist = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+        cost = dist + penalty
+        self.edges.append(
+            {
+                "src": src_name,
+                "dst": dst_name,
+                "distance": dist,
+                "penalty": penalty,
+                "cost": cost,
+            }
+        )
+
+    def _make_undirected(self):
+        """Duplicate all edges in the opposite direction."""
+        extra = []
+        for e in self.edges:
+            extra.append(
+                {
+                    "src": e["dst"],
+                    "dst": e["src"],
+                    "distance": e["distance"],
+                    "penalty": e["penalty"],
+                    "cost": e["cost"],
+                }
+            )
+        self.edges.extend(extra)
+
+    def _build_adjacency(self):
+        """Build adjacency list: node_name -> [(neighbor_name, cost), ...]."""
+        adj = {name: [] for name in self.nodes.keys()}
+        for e in self.edges:
+            adj[e["src"]].append((e["dst"], e["cost"]))
+        return adj
+
+    def get_position(self, node_name):
+        """Return (x, y) position of a node or None if unknown."""
+        return self.nodes.get(node_name, None)
+
+    # ------------------------------------------------------------------
+    # A* Search
+    # ------------------------------------------------------------------
+    def heuristic(self, node_name, goal_name):
+        """Euclidean distance heuristic between node and goal."""
+        pos_n = self.get_position(node_name)
+        pos_g = self.get_position(goal_name)
+        if pos_n is None or pos_g is None:
+            return 0.0
+        (x1, y1) = pos_n
+        (x2, y2) = pos_g
+        return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+
+    def astar(self, start, goal):
+        """Run A* from start node name to goal node name. Return list of node names."""
+        if start not in self.nodes:
+            rospy.logerr("SemanticPlanner: start node '%s' not in graph", start)
+            return None
+        if goal not in self.nodes:
+            rospy.logerr("SemanticPlanner: goal node '%s' not in graph", goal)
+            return None
+
+        # Priority queue of (f_score, node_name)
+        open_heap = []
+        heapq.heappush(open_heap, (0.0, start))
+
+        came_from = {}
+        g_score = {name: float("inf") for name in self.nodes.keys()}
+        f_score = {name: float("inf") for name in self.nodes.keys()}
+        g_score[start] = 0.0
+        f_score[start] = self.heuristic(start, goal)
+
+        open_set = set([start])
+
+        while open_heap:
+            current_f, current = heapq.heappop(open_heap)
+
+            if current == goal:
+                return self._reconstruct_path(came_from, current)
+
+            if current not in open_set:
+                # This is an outdated entry in the heap
+                continue
+            open_set.remove(current)
+
+            for (neighbor, cost) in self.adj[current]:
+                tentative_g = g_score[current] + cost
+                if tentative_g < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g
+                    f_score[neighbor] = tentative_g + self.heuristic(neighbor, goal)
+                    if neighbor not in open_set:
+                        open_set.add(neighbor)
+                        heapq.heappush(open_heap, (f_score[neighbor], neighbor))
+
+        rospy.logwarn("SemanticPlanner: A* search failed from %s to %s", start, goal)
+        return None
+
+    def _reconstruct_path(self, came_from, current):
+        """Reconstruct a path (list of node names) from came_from map."""
+        path = [current]
+        while current in came_from:
+            current = came_from[current]
+            path.append(current)
+        path.reverse()
+        return path
+
+    # ------------------------------------------------------------------
+    # ROS Callbacks
+    # ------------------------------------------------------------------
+    def goal_callback(self, msg):
+        """Handle an incoming goal node name, run A*, and publish /planned_path."""
+        goal_name = msg.data.strip()
+        if not goal_name:
+            rospy.logwarn("SemanticPlanner: received empty goal name.")
+            return
+
+        # Use the last known semantic node as the start for this plan.
+        start_name = self.current_node_id
+
+        rospy.loginfo(
+            "SemanticPlanner: received goal '%s'. Planning from '%s'.",
+            goal_name,
+            start_name,
+        )
+
+        path_nodes = self.astar(start_name, goal_name)
+        if path_nodes is None:
+            rospy.logwarn(
+                "SemanticPlanner: no path found from %s to %s.",
+                start_name,
+                goal_name,
+            )
+            return
+
+        rospy.loginfo(
+            "SemanticPlanner: planned path: %s", " -> ".join(path_nodes)
+        )
+
+        # Update our notion of where the robot is in the semantic graph.
+        # Normally this is just the goal node, but we use the last node
+        # of the path for safety.
+        self.current_node_id = path_nodes[-1]
+
+        self.publish_path(path_nodes)
+
+    def publish_path(self, node_list):
+        """Convert node_list to nav_msgs/Path and publish on /planned_path."""
+        path_msg = Path()
+        path_msg.header.stamp = rospy.Time.now()
+        path_msg.header.frame_id = self.frame_id
+
+        for name in node_list:
+            pos = self.get_position(name)
+            if pos is None:
+                rospy.logwarn(
+                    "SemanticPlanner: node '%s' has no position, skipping.", name
+                )
+                continue
+            x, y = pos
+            pose = PoseStamped()
+            pose.header.stamp = path_msg.header.stamp
+            pose.header.frame_id = self.frame_id
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.position.z = 0.0
+            pose.pose.orientation.w = 1.0  # No rotation for now
+            path_msg.poses.append(pose)
+
+        self.path_pub.publish(path_msg)
+        rospy.loginfo(
+            "SemanticPlanner: published Path with %d poses.", len(path_msg.poses)
+        )
+
+
+def main():
+    rospy.init_node("route_planner")
+    planner = SemanticPlanner()
+    rospy.loginfo("SemanticPlanner node is up.")
+    rospy.spin()
+
+
+if __name__ == "__main__":
+    main()
+

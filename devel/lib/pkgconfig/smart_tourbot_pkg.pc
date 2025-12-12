@@ -1,0 +1,8 @@
+prefix=/home/chan0239/catkin_ws/devel
+
+Name: smart_tourbot_pkg
+Description: Description of smart_tourbot_pkg
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: gazebo_ros geometry_msgs rospy sensor_msgs std_msgs nav_msgs

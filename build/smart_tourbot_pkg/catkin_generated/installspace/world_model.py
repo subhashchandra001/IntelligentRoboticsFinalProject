@@ -1,0 +1,254 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+
+"""
+world_model.py
+
+Semantic world model for SMART-TourBot.
+
+This node:
+  * Defines a small semantic graph of key locations in REPF/DEH (placeholder layout).
+  * Stores nodes (name, x, y) and edges (from, to, base_distance, penalty, total_cost).
+  * Periodically publishes RViz markers so we can visualize the graph.
+  * Provides simple helper methods that the planner can reuse later.
+
+Later extensions (not required today, but planned):
+  * Load graph from a YAML file instead of hard-coding.
+  * Expose a ROS service for "get_neighbors(node_name)".
+"""
+
+from __future__ import print_function
+
+import math
+import rospy
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point
+
+
+class SemanticWorldModel(object):
+    def __init__(self):
+        rospy.loginfo("SemanticWorldModel: initializing...")
+
+        # Frame in which we define all semantic coordinates
+        self.frame_id = rospy.get_param("~frame_id", "map")
+
+        # Publisher for RViz markers
+        self.markers_pub = rospy.Publisher(
+            "semantic_map_markers",
+            MarkerArray,
+            queue_size=1,
+            latch=True,
+        )
+
+        # ------------------------------------------------------------------
+        # Semantic nodes: name -> (x, y)
+        # NOTE: Coordinates are in meters, placeholder layout.
+        # ------------------------------------------------------------------
+        self.nodes = {
+            "START_REPF_ENTRANCE": (0.0, 0.0),
+            "REPF_BAYS":           (0.0, 2.74),
+            "REPF_UPPER_WALKWAY":  (1.76, 2.74),
+            "DEH_ATRIUM":          (1.76, 4.54),
+            "DEH_CS_OFFICE":       (4.76, 4.54),
+            "DEH_LABS":            (4.76, 0.0),
+            "HIGHLIGHT_HOUGEN":    (2.0, 0.0),
+        }
+
+        # ------------------------------------------------------------------
+        # Semantic edges: list of dicts
+        # cost = distance + penalty
+        # penalty encodes carpet, narrow corridor, heavy traffic, etc.
+        # ------------------------------------------------------------------
+        self.edges = []
+        self._add_edge("START_REPF_ENTRANCE", "REPF_BAYS",          penalty=0.1)
+        self._add_edge("REPF_BAYS",            "REPF_UPPER_WALKWAY", penalty=0.1)
+        self._add_edge("REPF_UPPER_WALKWAY",   "DEH_ATRIUM",         penalty=0.1)
+        self._add_edge("DEH_ATRIUM",           "DEH_CS_OFFICE",      penalty=0.1)
+        self._add_edge("DEH_CS_OFFICE",        "DEH_LABS",           penalty=0.1)
+        self._add_edge("DEH_LABS",             "HIGHLIGHT_HOUGEN",   penalty=0.1)
+        self._add_edge("HIGHLIGHT_HOUGEN",     "START_REPF_ENTRANCE", penalty=0.9)
+
+
+
+
+
+        # Also add reverse edges so the graph is undirected
+        self._make_undirected()
+
+        # Publish markers once at startup and then periodically
+        self.publish_markers()
+        rospy.Timer(rospy.Duration(2.0), self._timer_cb)
+
+        rospy.loginfo(
+            "SemanticWorldModel: ready with %d nodes and %d edges",
+            len(self.nodes),
+            len(self.edges),
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _add_edge(self, src_name, dst_name, penalty=0.0):
+        """Add a directed edge from src to dst with penalty."""
+        if src_name not in self.nodes or dst_name not in self.nodes:
+            rospy.logwarn(
+                "SemanticWorldModel: cannot add edge %s -> %s (unknown node)",
+                src_name,
+                dst_name,
+            )
+            return
+
+        x1, y1 = self.nodes[src_name]
+        x2, y2 = self.nodes[dst_name]
+        dist = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+        cost = dist + penalty
+
+        edge = {
+            "src": src_name,
+            "dst": dst_name,
+            "distance": dist,
+            "penalty": penalty,
+            "cost": cost,
+        }
+        self.edges.append(edge)
+
+    def _make_undirected(self):
+        """For every edge src->dst, add dst->src with same cost."""
+        extra_edges = []
+        for e in self.edges:
+            extra_edges.append(
+                {
+                    "src": e["dst"],
+                    "dst": e["src"],
+                    "distance": e["distance"],
+                    "penalty": e["penalty"],
+                    "cost": e["cost"],
+                }
+            )
+        self.edges.extend(extra_edges)
+
+    # ------------------------------------------------------------------
+    # Public API (for planner / others to reuse later)
+    # ------------------------------------------------------------------
+    def get_neighbors(self, node_name):
+        """Return list of (neighbor_name, cost) for a given node."""
+        neighbors = []
+        for e in self.edges:
+            if e["src"] == node_name:
+                neighbors.append((e["dst"], e["cost"]))
+        return neighbors
+
+    def get_position(self, node_name):
+        """Return (x, y) for the given node name or None if not found."""
+        return self.nodes.get(node_name, None)
+
+    # ------------------------------------------------------------------
+    # RViz marker publishing
+    # ------------------------------------------------------------------
+    def _timer_cb(self, event):
+        """Timer callback to republish markers periodically."""
+        self.publish_markers()
+
+    def publish_markers(self):
+        """Publish semantic nodes and edges as RViz markers."""
+        marker_array = MarkerArray()
+        now = rospy.Time.now()
+
+        # ---------------------- Node markers ----------------------
+        node_marker = Marker()
+        node_marker.header.frame_id = self.frame_id
+        node_marker.header.stamp = now
+        node_marker.ns = "semantic_nodes"
+        node_marker.id = 0
+        node_marker.type = Marker.SPHERE_LIST
+        node_marker.action = Marker.ADD
+        node_marker.scale.x = 0.3
+        node_marker.scale.y = 0.3
+        node_marker.scale.z = 0.3
+        node_marker.color.r = 0.0
+        node_marker.color.g = 1.0
+        node_marker.color.b = 0.0
+        node_marker.color.a = 1.0
+
+        # Labels for nodes
+        text_markers = []
+        i = 0
+        for name, (x, y) in self.nodes.items():
+            p = Point()
+            p.x = x
+            p.y = y
+            p.z = 0.0
+            node_marker.points.append(p)
+
+            text = Marker()
+            text.header.frame_id = self.frame_id
+            text.header.stamp = now
+            text.ns = "semantic_labels"
+            text.id = 100 + i
+            text.type = Marker.TEXT_VIEW_FACING
+            text.action = Marker.ADD
+            text.scale.z = 0.4
+            text.color.r = 1.0
+            text.color.g = 1.0
+            text.color.b = 1.0
+            text.color.a = 1.0
+            text.pose.position.x = x
+            text.pose.position.y = y
+            text.pose.position.z = 0.6
+            text.text = name
+            text_markers.append(text)
+            i += 1
+
+        marker_array.markers.append(node_marker)
+        marker_array.markers.extend(text_markers)
+
+        # ---------------------- Edge markers ----------------------
+        edge_marker = Marker()
+        edge_marker.header.frame_id = self.frame_id
+        edge_marker.header.stamp = now
+        edge_marker.ns = "semantic_edges"
+        edge_marker.id = 1
+        edge_marker.type = Marker.LINE_LIST
+        edge_marker.action = Marker.ADD
+        edge_marker.scale.x = 0.05
+        edge_marker.color.r = 0.0
+        edge_marker.color.g = 0.0
+        edge_marker.color.b = 1.0
+        edge_marker.color.a = 1.0
+
+        for e in self.edges:
+            src_pos = self.get_position(e["src"])
+            dst_pos = self.get_position(e["dst"])
+            if src_pos is None or dst_pos is None:
+                continue
+
+            p1 = Point()
+            p1.x, p1.y = src_pos
+            p1.z = 0.1
+
+            p2 = Point()
+            p2.x, p2.y = dst_pos
+            p2.z = 0.1
+
+            edge_marker.points.append(p1)
+            edge_marker.points.append(p2)
+
+        marker_array.markers.append(edge_marker)
+
+        self.markers_pub.publish(marker_array)
+        rospy.logdebug(
+            "SemanticWorldModel: published %d markers",
+            len(marker_array.markers),
+        )
+
+
+def main():
+    rospy.init_node("world_model")
+    model = SemanticWorldModel()
+    rospy.loginfo("SemanticWorldModel node is up.")
+    rospy.spin()
+
+
+if __name__ == "__main__":
+    main()
+
