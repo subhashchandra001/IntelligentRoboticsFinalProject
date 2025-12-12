@@ -139,7 +139,16 @@ This provides:
 ### Step 3: Launch Audio System (ROBOT LAPTOP)
 
 ```bash
-roslaunch smart_tourbot_pkg robot_audio.launch
+Minimal startup. Start up TurtleBot nodes by entering the following command on the laptop (required):
+
+Mapping. Shut down 3D sensing (if it is running), then start gmapping by entering the following command on the laptop (strongly recommended):
+roslaunch turtlebot_navigation gmapping_demo.launch
+
+roslaunch turtlebot_bringup minimal.launch
+
+roslaunch smart_tourbot_pkg robot_audio.launch  (For audio, on laptop)
+
+roslaunch smart_tourbot_pkg smart_tourbot_real.launch  (On Desktop Recommended)
 ```
 
 This starts:
