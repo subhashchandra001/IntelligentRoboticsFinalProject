@@ -233,10 +233,13 @@ IDLE → PRESENT → NEXT_STOP → TRAVEL → PRESENT → ... → DONE
 
 ---
 
+
 ## 11. Acknowledgements
 
-We thank **Prof. Dean Hougen** for guidance throughout the course and for providing
-the TurtleBot platform and laboratory facilities used in this project.
+I would like to sincerely thank **Prof. Dean Hougen** for his guidance throughout the course and for providing access to the TurtleBot platform and laboratory facilities used in this project.
+
+I also gratefully acknowledge **Prof. Golnaz Habibi** for granting permission to use the **Minicity area**, which supported the real-robot experimentation component of this work.
+
 
 ---
 
