@@ -238,8 +238,7 @@ IDLE → PRESENT → NEXT_STOP → TRAVEL → PRESENT → ... → DONE
 
 I would like to sincerely thank **Prof. Dean Hougen** for his guidance throughout the course and for providing access to the TurtleBot platform and laboratory facilities used in this project.
 
-I also gratefully acknowledge **Prof. Golnaz Habibi** for granting permission to use the **Minicity area**, which supported the real-robot experimentation component of this work.
-
+I also gratefully acknowledge **Prof. Golnaz Habibi**, along with the **Gallogly College of Engineering (GCoE)** and **AirOU** lab, for their support of the **Minicity environment**, which enabled the real-robot experimentation component of this work.
 
 ---
 
