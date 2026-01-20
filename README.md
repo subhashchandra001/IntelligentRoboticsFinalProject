@@ -10,6 +10,8 @@ avoidance, and synchronized audio narration at key tour stops.
 
 ---
 
+## Demo Video Link: https://www.youtube.com/watch?v=nCyqgpr7wyQ
+
 ## 1. Repository Structure
 
 This repository is a **full ROS catkin workspace** and should be cloned as‑is.
